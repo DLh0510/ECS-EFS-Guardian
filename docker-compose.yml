@@ -1,0 +1,21 @@
+version: '3'
+
+services:
+  efs-check:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./:/app
+      - efs-data:/mnt/efs
+    env_file:
+      - .env.local
+    environment:
+      - EFS_MOUNT_PATH=/mnt/efs
+      - HEALTH_CHECK_DIR=/mnt/efs/test
+      - DEBUG=True
+
+volumes:
+  efs-data:
+    # 本地开发环境中使用的模拟EFS卷
+    # 在实际的ECS任务中，会挂载真实的EFS文件系统 

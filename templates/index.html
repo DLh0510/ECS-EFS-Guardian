@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECS-EFS连通性检测</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .status-card {
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+        .status-ok {
+            border-left: 5px solid #28a745;
+        }
+        .status-warning {
+            border-left: 5px solid #ffc107;
+        }
+        .status-error {
+            border-left: 5px solid #dc3545;
+        }
+        .refresh-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+        .loading {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+        .spinner-border {
+            width: 3rem; 
+            height: 3rem;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .file-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading" id="loadingOverlay">
+        <div class="spinner-border text-light" role="status">
+            <span class="visually-hidden">加载中...</span>
+        </div>
+    </div>
+
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="#">ECS-EFS连通性检测</a>
+            <span class="navbar-text" id="timestamp">
+                更新时间: -
+            </span>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-md-12 mb-4">
+                <div class="alert alert-primary" role="alert">
+                    <h4 class="alert-heading">ECS-EFS连通性检测工具</h4>
+                    <p>此工具用于检测ECS任务是否成功挂载EFS文件系统，并验证基本的读写功能。</p>
+                    <hr>
+                    <p class="mb-0">点击右下角的刷新按钮可以重新执行检测。</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- 实例信息 -->
+            <div class="col-md-6">
+                <div class="card status-card" id="instanceCard">
+                    <div class="card-header">
+                        <h5>实例信息</h5>
+                    </div>
+                    <div class="card-body">
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                实例ID
+                                <span id="instanceId">加载中...</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                可用区
+                                <span id="availabilityZone">加载中...</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                私有IP
+                                <span id="privateIp">加载中...</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- EFS挂载状态 -->
+            <div class="col-md-6">
+                <div class="card status-card" id="mountCard">
+                    <div class="card-header">
+                        <h5>EFS挂载状态</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert" id="mountStatus" role="alert">
+                            检查中...
+                        </div>
+                        <ul class="list-group list-group-flush" id="mountDetails">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                文件系统类型
+                                <span id="filesystemType">-</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                总容量
+                                <span id="totalSize">-</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                可用空间
+                                <span id="availableSpace">-</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                使用率
+                                <span id="usePercent">-</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <!-- 权限状态 -->
+            <div class="col-md-6">
+                <div class="card status-card" id="permissionsCard">
+                    <div class="card-header">
+                        <h5>EFS权限状态</h5>
+                    </div>
+                    <div class="card-body">
+                        <ul class="list-group list-group-flush">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                读取权限
+                                <span id="readPermission">-</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                写入权限
+                                <span id="writePermission">-</span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                测试文件
+                                <span id="testFilePath">-</span>
+                            </li>
+                        </ul>
+                        <div class="mt-3">
+                            <h6>文件内容:</h6>
+                            <pre id="fileContent">-</pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 文件列表 -->
+            <div class="col-md-6">
+                <div class="card status-card" id="filesCard">
+                    <div class="card-header">
+                        <h5>EFS文件列表</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="file-list">
+                            <table class="table table-sm table-hover">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">文件名</th>
+                                        <th scope="col">类型</th>
+                                        <th scope="col">大小</th>
+                                        <th scope="col">修改时间</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="filesList">
+                                    <tr>
+                                        <td colspan="4" class="text-center">加载中...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 问题诊断 -->
+        <div class="row mt-4" id="issuesSection" style="display: none;">
+            <div class="col-md-12">
+                <div class="card status-card status-error">
+                    <div class="card-header">
+                        <h5>问题诊断</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-danger" role="alert">
+                            检测到EFS挂载或访问问题。以下是可能的原因和解决方案:
+                        </div>
+                        <ul class="list-group" id="issuesList">
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button class="btn btn-primary btn-lg rounded-circle refresh-btn" id="refreshBtn" title="刷新状态">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" class="bi bi-arrow-clockwise" viewBox="0 0 16 16">
+            <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+            <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+        </svg>
+    </button>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始加载状态
+            fetchStatus();
+            
+            // 刷新按钮
+            document.getElementById('refreshBtn').addEventListener('click', function() {
+                refreshStatus();
+            });
+        });
+
+        // 获取状态数据
+        function fetchStatus() {
+            showLoading();
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    updateUI(data);
+                    hideLoading();
+                })
+                .catch(error => {
+                    console.error('获取状态失败:', error);
+                    showError('无法获取EFS状态，请检查应用是否正常运行。');
+                    hideLoading();
+                });
+        }
+
+        // 刷新状态
+        function refreshStatus() {
+            showLoading();
+            fetch('/api/refresh', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                updateUI(data);
+                hideLoading();
+            })
+            .catch(error => {
+                console.error('刷新状态失败:', error);
+                showError('刷新失败，请稍后重试。');
+                hideLoading();
+            });
+        }
+
+        // 更新UI
+        function updateUI(data) {
+            // 更新时间戳
+            document.getElementById('timestamp').textContent = `更新时间: ${data.timestamp}`;
+            
+            // 更新实例信息
+            document.getElementById('instanceId').textContent = data.instance.instance_id;
+            document.getElementById('availabilityZone').textContent = data.instance.availability_zone;
+            document.getElementById('privateIp').textContent = data.instance.private_ip;
+            
+            // 更新挂载状态
+            const mountCard = document.getElementById('mountCard');
+            const mountStatus = document.getElementById('mountStatus');
+            const mountDetails = document.getElementById('mountDetails');
+            
+            if (data.mount.is_mounted) {
+                mountCard.className = 'card status-card status-ok';
+                mountStatus.className = 'alert alert-success';
+                mountStatus.textContent = 'EFS挂载成功';
+                
+                document.getElementById('filesystemType').textContent = data.mount.filesystem_type;
+                document.getElementById('totalSize').textContent = data.mount.total_size;
+                document.getElementById('availableSpace').textContent = data.mount.available_space;
+                document.getElementById('usePercent').textContent = data.mount.use_percent;
+                
+                mountDetails.style.display = 'block';
+            } else {
+                mountCard.className = 'card status-card status-error';
+                mountStatus.className = 'alert alert-danger';
+                mountStatus.textContent = `挂载失败: ${data.mount.error}`;
+                
+                mountDetails.style.display = 'none';
+            }
+            
+            // 更新权限状态
+            const permissionsCard = document.getElementById('permissionsCard');
+            
+            if (data.mount.is_mounted && !data.permissions.error) {
+                permissionsCard.className = data.permissions.write ? 
+                    'card status-card status-ok' : 'card status-card status-warning';
+                
+                const readIcon = data.permissions.read ? 
+                    '<span class="badge bg-success">✓</span>' : '<span class="badge bg-danger">✗</span>';
+                const writeIcon = data.permissions.write ? 
+                    '<span class="badge bg-success">✓</span>' : '<span class="badge bg-danger">✗</span>';
+                
+                document.getElementById('readPermission').innerHTML = readIcon;
+                document.getElementById('writePermission').innerHTML = writeIcon;
+                document.getElementById('testFilePath').textContent = data.permissions.test_file || '-';
+                document.getElementById('fileContent').textContent = data.permissions.content || '-';
+            } else {
+                permissionsCard.className = 'card status-card status-error';
+                document.getElementById('readPermission').innerHTML = '<span class="badge bg-secondary">未知</span>';
+                document.getElementById('writePermission').innerHTML = '<span class="badge bg-secondary">未知</span>';
+                document.getElementById('testFilePath').textContent = '-';
+                document.getElementById('fileContent').textContent = data.permissions.error || '无法获取权限信息';
+            }
+            
+            // 更新文件列表
+            const filesCard = document.getElementById('filesCard');
+            const filesList = document.getElementById('filesList');
+            
+            if (data.mount.is_mounted && !data.files.error) {
+                filesCard.className = 'card status-card status-ok';
+                
+                // 清空现有文件列表
+                filesList.innerHTML = '';
+                
+                if (data.files.count > 0) {
+                    // 添加文件
+                    data.files.files.forEach(file => {
+                        const row = document.createElement('tr');
+                        
+                        const nameCell = document.createElement('td');
+                        nameCell.textContent = file.name;
+                        
+                        const typeCell = document.createElement('td');
+                        typeCell.textContent = file.is_dir ? '目录' : '文件';
+                        
+                        const sizeCell = document.createElement('td');
+                        sizeCell.textContent = formatBytes(file.size);
+                        
+                        const timeCell = document.createElement('td');
+                        timeCell.textContent = file.modified;
+                        
+                        row.appendChild(nameCell);
+                        row.appendChild(typeCell);
+                        row.appendChild(sizeCell);
+                        row.appendChild(timeCell);
+                        
+                        filesList.appendChild(row);
+                    });
+                } else {
+                    // 无文件
+                    const row = document.createElement('tr');
+                    const cell = document.createElement('td');
+                    cell.setAttribute('colspan', '4');
+                    cell.className = 'text-center';
+                    cell.textContent = '目录为空';
+                    row.appendChild(cell);
+                    filesList.appendChild(row);
+                }
+            } else {
+                filesCard.className = 'card status-card status-error';
+                filesList.innerHTML = `<tr><td colspan="4" class="text-center text-danger">${data.files.error || '无法获取文件列表'}</td></tr>`;
+            }
+            
+            // 更新问题诊断
+            const issuesSection = document.getElementById('issuesSection');
+            const issuesList = document.getElementById('issuesList');
+            
+            if (!data.mount.is_mounted && data.issues && data.issues.length > 0) {
+                issuesSection.style.display = 'block';
+                
+                // 清空现有问题列表
+                issuesList.innerHTML = '';
+                
+                // 添加问题
+                data.issues.forEach(issue => {
+                    const item = document.createElement('li');
+                    item.className = 'list-group-item';
+                    
+                    const typeSpan = document.createElement('span');
+                    typeSpan.className = 'badge bg-danger me-2';
+                    typeSpan.textContent = issue.type;
+                    
+                    const textSpan = document.createElement('span');
+                    textSpan.innerHTML = `<strong>${issue.detail}</strong><br>可能的解决方案: ${issue.possible_fix}`;
+                    
+                    item.appendChild(typeSpan);
+                    item.appendChild(textSpan);
+                    
+                    issuesList.appendChild(item);
+                });
+            } else {
+                issuesSection.style.display = 'none';
+            }
+        }
+
+        // 显示加载遮罩
+        function showLoading() {
+            document.getElementById('loadingOverlay').style.display = 'flex';
+        }
+
+        // 隐藏加载遮罩
+        function hideLoading() {
+            document.getElementById('loadingOverlay').style.display = 'none';
+        }
+
+        // 显示错误
+        function showError(message) {
+            // 添加错误提示
+            const container = document.querySelector('.container');
+            const errorAlert = document.createElement('div');
+            errorAlert.className = 'alert alert-danger alert-dismissible fade show mt-4';
+            errorAlert.setAttribute('role', 'alert');
+            errorAlert.innerHTML = `
+                <strong>错误:</strong> ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            `;
+            
+            container.prepend(errorAlert);
+        }
+
+        // 格式化字节大小
+        function formatBytes(bytes, decimals = 2) {
+            if (bytes === 0) return '0 Bytes';
+            if (!bytes) return '-';
+            
+            const k = 1024;
+            const dm = decimals < 0 ? 0 : decimals;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+            
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+        }
+    </script>
+</body>
+</html> 
